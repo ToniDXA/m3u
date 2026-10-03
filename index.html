@@ -2,40 +2,49 @@
 <html lang="zh-HK">
 <head>
   <meta charset="UTF-8" />
-  <title>M3U Player</title>
+  <title>M3U Browser</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    :root { --bg:#0f1115; --panel:#161922; --text:#e8eaed; --accent:#4f8cff; }
-    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); display:flex; height:100vh; }
-    .sidebar { width:280px; background:var(--panel); border-right:1px solid #222636; display:flex; flex-direction:column; }
-    .main { flex:1; display:flex; flex-direction:column; }
-    .topbar { padding:12px 16px; border-bottom:1px solid #222636; display:flex; align-items:center; gap:10px; }
+    :root { --bg:#0b0d14; --panel:#121522; --text:#e8eaed; --muted:#9aa0aa; --accent:#4f8cff; --border:#1f2436; --err:#ff6b6b; }
+    body { margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; }
+    .sidebar { width:300px; background:var(--panel); border-right:1px solid var(--border); display:flex; flex-direction:column; }
+    .topbar { padding:12px; border-bottom:1px solid var(--border); display:flex; flex-direction:column; gap:8px; }
+    .row { display:flex; gap:8px; align-items:center; }
+    .btn { background:var(--accent); color:#fff; border:none; padding:8px 10px; border-radius:6px; cursor:pointer; font-size:14px; }
+    .btn.secondary { background:#1f2436; }
+    input[type="text"] { width:100%; background:#0f1324; border:1px solid var(--border); color:var(--text); padding:8px 10px; border-radius:6px; outline:none; }
     .channel-list { flex:1; overflow:auto; }
-    .channel-item { padding:10px 14px; border-bottom:1px solid #1f2333; cursor:pointer; font-size:14px; }
-    .channel-item:hover { background:#1c2133; }
-    .channel-item.active { background:#1f2a4a; border-left:3px solid var(--accent); }
-    .video-wrap { flex:1; background:#000; display:flex; align-items:center; justify-content:center; }
+    .channel-item { padding:10px 12px; border-bottom:1px solid var(--border); cursor:pointer; font-size:14px; display:flex; justify-content:space-between; align-items:center; }
+    .channel-item:hover { background:#171c30; }
+    .channel-item.active { background:#1b2546; border-left:3px solid var(--accent); }
+    .meta { font-size:12px; color:var(--muted); }
+    .main { flex:1; display:flex; flex-direction:column; }
+    .video-wrap { flex:1; background:#000; position:relative; display:flex; align-items:center; justify-content:center; }
     video { width:100%; height:100%; max-height:100vh; }
-    .empty-state { text-align:center; opacity:.7; }
+    .status { font-size:12px; color:var(--muted); }
+    .error-bar { position:absolute; bottom:10px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,.75); color:var(--err); padding:6px 10px; border-radius:6px; font-size:13px; display:none; }
+    .now-playing { padding:8px 12px; border-bottom:1px solid var(--border); font-size:13px; }
     .file-input { display:none; }
-    .btn { background:var(--accent); color:#fff; border:none; padding:8px 12px; border-radius:6px; cursor:pointer; font-size:14px; }
-    .btn.secondary { background:#23283a; }
-    .status { font-size:12px; opacity:.8; margin-left:auto; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/hls.js@1.5.7/dist/hls.min.js"></script>
 </head>
 <body>
   <div class="sidebar">
     <div class="topbar">
-      <button class="btn" id="uploadBtn">上傳 M3U</button>
-      <input class="file-input" id="fileInput" type="file" accept=".m3u,.m3u8" />
-      <div class="status" id="status"></div>
+      <div class="row">
+        <button class="btn" id="uploadBtn">上傳 M3U</button>
+        <input class="file-input" id="fileInput" type="file" accept=".m3u,.m3u8" />
+      </div>
+      <input type="text" id="searchBox" placeholder="搜尋頻道..." />
+      <div class="status" id="status">未載入 M3U</div>
     </div>
     <div class="channel-list" id="channelList"></div>
   </div>
   <div class="main">
+    <div class="now-playing" id="nowPlaying">未播放</div>
     <div class="video-wrap">
-      <video id="video" controls></video>
+      <video id="video" controls playsinline></video>
+      <div class="error-bar" id="errorBar"></div>
     </div>
   </div>
 
@@ -45,8 +54,12 @@
     const channelList = document.getElementById('channelList');
     const video = document.getElementById('video');
     const status = document.getElementById('status');
+    const errorBar = document.getElementById('errorBar');
+    const searchBox = document.getElementById('searchBox');
+    const nowPlaying = document.getElementById('nowPlaying');
 
     let channels = [];
+    let filtered = [];
     let hls = null;
 
     uploadBtn.addEventListener('click', () => fileInput.click());
@@ -55,10 +68,27 @@
       const file = e.target.files[0];
       if (!file) return;
       status.textContent = '載入中...';
-      const text = await file.text();
-      channels = parseM3U(text);
+      errorBar.style.display = 'none';
+      try {
+        const text = await file.text();
+        channels = parseM3U(text);
+        filtered = channels.slice();
+        renderChannels();
+        status.textContent = `已載入 ${channels.length} 個頻道`;
+      } catch (err) {
+        status.textContent = '讀取失敗';
+        showError('讀取 M3U 檔案失敗：' + err.message);
+      }
+    });
+
+    searchBox.addEventListener('input', () => {
+      const q = searchBox.value.trim().toLowerCase();
+      if (!q) {
+        filtered = channels.slice();
+      } else {
+        filtered = channels.filter(c => (c.name || '').toLowerCase().includes(q));
+      }
       renderChannels();
-      status.textContent = `已載入 ${channels.length} 個頻道`;
     });
 
     function parseM3U(content) {
@@ -72,7 +102,10 @@
           const meta = line.slice(8);
           const parts = meta.split(',');
           const name = parts.slice(1).join(',').trim() || parts[0].trim();
-          current = { name, url: '' };
+          current = { name, url: '', group: '' };
+          // 嘗試抽 group (tvg-group)
+          const groupMatch = line.match(/group-title="([^"]*)"/i);
+          if (groupMatch) current.group = groupMatch[1];
         } else if (!line.startsWith('#') && current) {
           current.url = line;
           result.push(current);
@@ -84,36 +117,59 @@
 
     function renderChannels() {
       channelList.innerHTML = '';
-      if (channels.length === 0) {
-        channelList.innerHTML = '<div class="empty-state" style="padding:16px">未偵測到頻道</div>';
+      if (filtered.length === 0) {
+        channelList.innerHTML = '<div style="padding:12px;opacity:.7">未找到頻道</div>';
         return;
       }
-      channels.forEach((ch, idx) => {
+      filtered.forEach((ch, idx) => {
         const div = document.createElement('div');
         div.className = 'channel-item';
-        div.textContent = ch.name || `Channel ${idx + 1}`;
-        div.dataset.index = idx;
+        const left = document.createElement('div');
+        left.textContent = ch.name || `Channel ${idx + 1}`;
+        const right = document.createElement('div');
+        right.className = 'meta';
+        right.textContent = ch.group || '';
+        div.appendChild(left);
+        div.appendChild(right);
         div.addEventListener('click', () => {
           document.querySelectorAll('.channel-item').forEach(i => i.classList.remove('active'));
           div.classList.add('active');
-          playChannel(ch.url);
+          playChannel(ch.url, ch.name);
         });
         channelList.appendChild(div);
       });
     }
 
-    function playChannel(url) {
+    function showError(msg) {
+      errorBar.textContent = msg;
+      errorBar.style.display = 'block';
+      setTimeout(() => { errorBar.style.display = 'none'; }, 6000);
+    }
+
+    function playChannel(url, name) {
+      if (!url) {
+        showError('該頻道沒有有效 URL');
+        return;
+      }
+      url = url.trim();
+      errorBar.style.display = 'none';
+      nowPlaying.textContent = name || '播放中...';
+
       if (Hls.isSupported()) {
-        if (hls) hls.destroy();
-        hls = new Hls();
+        if (hls) { hls.destroy(); hls = null; }
+        hls = new Hls({ enableWorker: true, lowLatencyMode: true, backBufferLength: 90 });
         hls.loadSource(url);
         hls.attachMedia(video);
         hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
+        hls.on(Hls.Events.ERROR, (event, data) => {
+          if (data.fatal) showError('載入失敗 (HLS 錯誤)');
+        });
       } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
         video.src = url;
         video.addEventListener('loadedmetadata', () => video.play().catch(()=>{}), { once: true });
+        video.addEventListener('error', () => showError('載入失敗 (原生 HLS)'), { once: true });
       } else {
-        alert('你的瀏覽器不支援 HLS 播放');
+        showError('你的瀏覽器不支援 HLS 播放');
       }
     }
   </script>
